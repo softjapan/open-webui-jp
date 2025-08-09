@@ -1,0 +1,128 @@
+services:
+  # Ollama LLM サーバー
+  ollama:
+    image: ollama/ollama:${OLLAMA_DOCKER_TAG-latest}
+    container_name: ollama-dev
+    volumes:
+      - ollama-dev:/root/.ollama
+    ports:
+      - "11434:11434"
+    tty: true
+    restart: unless-stopped
+    networks:
+      - open-webui-dev
+
+  # PostgreSQL データベース（オプション）
+  postgres:
+    image: postgres:15-alpine
+    container_name: postgres-dev
+    environment:
+      POSTGRES_DB: openwebui
+      POSTGRES_USER: openwebui
+      POSTGRES_PASSWORD: openwebui
+    volumes:
+      - postgres-dev:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+    networks:
+      - open-webui-dev
+    profiles:
+      - postgres
+
+  # Redis キャッシュ（オプション）
+  redis:
+    image: redis:7-alpine
+    container_name: redis-dev
+    volumes:
+      - redis-dev:/data
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+    networks:
+      - open-webui-dev
+    profiles:
+      - redis
+
+  # Open WebUI 統合開発サーバー
+  open-webui:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev.simple
+    container_name: open-webui-dev
+    volumes:
+      # ソースコードをマウント（ホットリロード用）
+      - ./backend:/app/backend
+      - ./src:/app/src
+      - ./static:/app/static
+      - ./scripts:/app/scripts
+      # 設定ファイル
+      - ./pyproject.toml:/app/pyproject.toml
+      - ./hatch_build.py:/app/hatch_build.py
+      - ./package.json:/app/package.json
+      - ./README.md:/app/README.md
+      - ./CHANGELOG.md:/app/CHANGELOG.md
+      - ./vite.config.ts:/app/vite.config.ts
+      - ./svelte.config.js:/app/svelte.config.js
+      - ./tailwind.config.js:/app/tailwind.config.js
+      - ./postcss.config.js:/app/postcss.config.js
+      - ./tsconfig.json:/app/tsconfig.json
+      # データ永続化
+      - backend-data-dev:/app/backend/data
+      # キャッシュ永続化
+      - backend-cache-dev:/app/backend/data/cache
+      - frontend-cache-dev:/app/.svelte-kit
+      - /app/node_modules
+    ports:
+      - "8080:8080"
+      - "5173:5173"
+    env_file:
+      - .env.dev  # 開発用環境変数ファイル
+    environment:
+      # Docker固有の設定（.env.devの設定を上書き）
+      - DOCKER=true
+      # WebSocketサポート（nginx使用時は無効化）
+      - ENABLE_WEBSOCKET_SUPPORT=false
+      # 開発環境でstaticディレクトリ削除を防ぐため、コンテナ内の別の場所を指定
+      - STATIC_DIR=/app/runtime/static
+      # PostgreSQL使用時の設定（--profile postgres）
+      - DATABASE_URL=${DATABASE_URL:-sqlite:///./data/webui.db}
+      # Redis使用時の設定（--profile redis）
+      - REDIS_URL=${REDIS_URL:-}
+      # Ollama接続（Docker内部通信）
+      - OLLAMA_BASE_URL=http://ollama:11434
+      # 埋め込みエンジン設定（空文字列でsentence-transformersを使用）
+      - RAG_EMBEDDING_ENGINE=
+      - RAG_RERANKING_ENGINE=
+      # フロントエンド開発用
+      - NODE_ENV=development
+      - CHOKIDAR_USEPOLLING=true
+    depends_on:
+      - ollama
+    restart: unless-stopped
+    networks:
+      - open-webui-dev
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  ollama-dev:
+    name: ollama-dev
+  postgres-dev:
+    name: postgres-dev
+  redis-dev:
+    name: redis-dev
+  backend-data-dev:
+    name: backend-data-dev
+  backend-cache-dev:
+    name: backend-cache-dev
+  frontend-cache-dev:
+    name: frontend-cache-dev
+
+networks:
+  open-webui-dev:
+    name: open-webui-dev
+    driver: bridge

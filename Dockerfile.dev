@@ -1,0 +1,117 @@
+# 開発用 Dockerfile
+# 開発環境に最適化されたシンプルな構成
+
+# ベースイメージ
+FROM python:3.11-slim-bookworm AS base
+
+# システム依存関係のインストール
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    git \
+    build-essential \
+    pandoc \
+    gcc \
+    netcat-openbsd \
+    curl \
+    jq \
+    python3-dev \
+    # RAG OCR用
+    ffmpeg \
+    libsm6 \
+    libxext6 \
+    # 開発用ツール
+    vim \
+    htop \
+    && rm -rf /var/lib/apt/lists/*
+
+# 作業ディレクトリ設定
+WORKDIR /app
+
+# uv のインストール
+RUN pip install --no-cache-dir uv
+
+# バックエンド開発環境
+FROM base AS backend-dev
+
+# 環境変数設定
+ENV ENV=dev \
+    PORT=8080 \
+    PYTHONPATH=/app/backend \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+# 必要なファイルをコピー（ビルド用）
+COPY pyproject.toml ./
+COPY hatch_build.py ./
+COPY package.json ./
+COPY backend/requirements.txt ./backend/
+
+# Python依存関係のインストール（requirements.txtから直接）
+RUN uv pip install --system -r backend/requirements.txt --no-cache-dir
+
+# 開発用の追加パッケージ
+RUN uv pip install --system \
+    watchfiles \
+    python-multipart \
+    uvicorn[standard] \
+    --no-cache-dir
+
+# データディレクトリ作成
+RUN mkdir -p /app/backend/data/cache/embedding/models \
+    /app/backend/data/cache/whisper/models \
+    /app/backend/data/cache/tiktoken \
+    /app/backend/data/logs
+
+# ポート公開
+EXPOSE 8080
+
+# ヘルスチェック
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8080/health || exit 1
+
+# 開発サーバー起動スクリプト
+COPY <<EOF /app/start-dev.sh
+#!/bin/bash
+set -e
+
+echo "Starting Open WebUI development server..."
+echo "Python path: \$PYTHONPATH"
+echo "Working directory: \$(pwd)"
+
+# バックエンドディレクトリに移動
+cd /app/backend
+
+# 開発サーバー起動（ホットリロード有効）
+exec python -m uvicorn open_webui.main:app \
+    --host 0.0.0.0 \
+    --port 8080 \
+    --reload \
+    --reload-dir /app/backend \
+    --log-level debug
+EOF
+
+RUN chmod +x /app/start-dev.sh
+
+# 開発サーバー起動
+CMD ["/app/start-dev.sh"]
+
+# フロントエンド開発環境（必要に応じて）
+FROM node:22-alpine AS frontend-dev
+
+WORKDIR /app
+
+# 開発用ツールのインストール
+RUN apk add --no-cache \
+    git \
+    curl \
+    && npm install -g npm@latest
+
+# 環境変数設定
+ENV NODE_ENV=development \
+    CHOKIDAR_USEPOLLING=true
+
+# ポート公開
+EXPOSE 5173 4173
+
+# 開発サーバー起動
+CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0"]

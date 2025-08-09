@@ -1,0 +1,75 @@
+# 開発用統合Dockerfile
+# フロントエンド・バックエンド統合でホットリロード対応
+
+FROM python:3.11-slim-bookworm
+
+# システム依存関係のインストール
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    git \
+    build-essential \
+    pandoc \
+    gcc \
+    netcat-openbsd \
+    curl \
+    jq \
+    python3-dev \
+    ffmpeg \
+    libsm6 \
+    libxext6 \
+    vim \
+    htop \
+    && rm -rf /var/lib/apt/lists/*
+
+# Node.js 22.x のインストール
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
+    apt-get update && \
+    apt-get install -y nodejs && \
+    rm -rf /var/lib/apt/lists/*
+
+# 作業ディレクトリ設定
+WORKDIR /app
+
+# uv のインストール
+RUN pip install --no-cache-dir uv
+
+# 環境変数設定
+ENV ENV=dev \
+    PORT=8080 \
+    PYTHONPATH=/app/backend \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+# 必要なファイルをコピー
+COPY backend/requirements.txt /tmp/requirements.txt
+COPY CHANGELOG.md /app/CHANGELOG.md
+
+# Python依存関係をインストール
+RUN uv pip install --system -r /tmp/requirements.txt --no-cache-dir
+
+# 開発用の追加パッケージ
+RUN uv pip install --system \
+    watchfiles \
+    python-multipart \
+    uvicorn[standard] \
+    --no-cache-dir
+
+# データディレクトリ作成
+RUN mkdir -p /app/backend/data/cache/embedding/models \
+    /app/backend/data/cache/whisper/models \
+    /app/backend/data/cache/tiktoken \
+    /app/backend/data/logs
+
+# ポート公開
+EXPOSE 8080 5173
+
+# ヘルスチェック
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8080/health || exit 1
+
+# 開発サーバー起動スクリプトをコピー
+COPY scripts/start-dev.sh /app/start-dev.sh
+RUN chmod +x /app/start-dev.sh
+
+# 開発サーバー起動
+CMD ["/app/start-dev.sh"]
