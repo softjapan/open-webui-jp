@@ -83,8 +83,6 @@ services:
       - DOCKER=true
       # WebSocketサポート（nginx使用時は無効化）
       - ENABLE_WEBSOCKET_SUPPORT=false
-      # 開発環境でstaticディレクトリ削除を防ぐため、コンテナ内の別の場所を指定
-      - STATIC_DIR=/app/runtime/static
       # PostgreSQL使用時の設定（--profile postgres）
       - DATABASE_URL=${DATABASE_URL:-sqlite:///./data/webui.db}
       # Redis使用時の設定（--profile redis）
